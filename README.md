@@ -1,4 +1,7 @@
 # Crudite 🥒🥕🌶
+[![Go Documentation](http://img.shields.io/badge/go-documentation-blue.svg?style=flat-square)][godocs]
+
+[godocs]: https://godoc.org/github.com/dollarshaveclub/crudite
 
 Crudite is a Go library for creating and managing CRDTs<sup>[1](https://en.wikipedia.org/wiki/Conflict-free_replicated_data_type)</sup> (specifically CmRDTs) using Kafka as a datastore backend.
 
