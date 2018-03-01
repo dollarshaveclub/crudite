@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-	"github.com/bsm/sarama-cluster"
 	"github.com/google/uuid"
 	"github.com/pkg/errors"
 )
@@ -121,8 +120,7 @@ type LogFunc func(string, ...interface{})
 type TypeManager struct {
 	ops      Options
 	id       string
-	cr       *cluster.Consumer
-	pc       sarama.AsyncProducer
+	k        kafka
 	contains *lockingCRDTs
 	stckr    *time.Ticker
 	lf       LogFunc
@@ -163,25 +161,13 @@ func NewTypeManager(ops Options) (*TypeManager, error) {
 	if err != nil {
 		return nil, errors.Wrap(err, "error getting random ID")
 	}
-	scfg := &sarama.Config{}
-	scfg.Net.MaxOpenRequests = int(ops.OutputQueueSize)
-	c, err := sarama.NewClient(ops.Brokers, scfg)
+	k, err := newRealKafka(ops, rid)
 	if err != nil {
-		return nil, errors.Wrap(err, "error getting Kafka client")
-	}
-	ap, err := sarama.NewAsyncProducerFromClient(c)
-	if err != nil {
-		return nil, errors.Wrap(err, "error getting async Kafka producer")
-	}
-	cc := &cluster.Client{Client: c}
-	cr, err := cluster.NewConsumerFromClient(cc, rid.String(), []string{ops.Topic})
-	if err != nil {
-		return nil, errors.Wrap(err, "error getting Kafka consumer")
+		return nil, errors.Wrap(err, "error getting Kafka clients")
 	}
 	tm := &TypeManager{
 		ops: ops,
-		cr:  cr,
-		pc:  ap,
+		k:   k,
 		contains: &lockingCRDTs{
 			values:    make(map[string]*crdt),
 			abstracts: make(map[string]*abstractCRDT),
@@ -252,7 +238,7 @@ func (tm *TypeManager) publishSnapshots() error {
 		if err != nil {
 			return errors.Wrap(err, "error marshaling operationMessage")
 		}
-		tm.pc.Input() <- &sarama.ProducerMessage{
+		tm.k.ProducerInput() <- &sarama.ProducerMessage{
 			Topic: tm.ops.Topic,
 			Key:   sarama.ByteEncoder(v.id),
 			Value: sarama.ByteEncoder(b),
@@ -273,7 +259,7 @@ func (tm *TypeManager) snapshots() {
 }
 
 func (tm *TypeManager) listener() {
-	for m := range tm.cr.Messages() {
+	for m := range tm.k.ConsumerMessages() {
 		tm.contains.RLock()
 		if val, ok := tm.contains.values[string(m.Key)]; ok {
 			opm := operationMessage{}
@@ -288,7 +274,7 @@ func (tm *TypeManager) listener() {
 					tm.lf("error performing op: %v", err)
 				}
 				val.Unlock()
-				tm.cr.MarkOffset(m, "processed for "+opm.ID)
+				tm.k.MarkOffset(m, "processed for "+opm.ID)
 			}
 		}
 		tm.contains.RUnlock()
@@ -307,23 +293,23 @@ func (tm *TypeManager) sendop(op *operationMessage) error {
 	}
 	if tm.ops.FailOnBlockingSend {
 		select {
-		case tm.pc.Input() <- pm:
+		case tm.k.ProducerInput() <- pm:
 			return nil
 		default:
 			return ErrSendWouldHaveBlocked
 		}
 	}
-	tm.pc.Input() <- pm // block
+	tm.k.ProducerInput() <- pm // block
 	return nil
 }
 
 // Stop shuts down the TypeManager
 func (tm *TypeManager) Stop() {
 	tm.stckr.Stop()
-	if err := tm.pc.Close(); err != nil {
+	if err := tm.k.Close(); err != nil {
 		tm.lf("error closing producer: %v", err)
 	}
-	if err := tm.cr.Close(); err != nil {
+	if err := tm.k.Close(); err != nil {
 		tm.lf("error closing consumer: %v", err)
 	}
 }
