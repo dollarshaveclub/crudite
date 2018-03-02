@@ -21,11 +21,8 @@ type DataType int
 const (
 	PNCounter DataType = iota
 	LWWSet
-)
-
-// Internal primitive CRDT types
-const (
-	pCounter DataType = iota
+	// Internal primitive CRDT types
+	pCounter
 	nCounter
 	aSet
 	rSet
@@ -152,6 +149,9 @@ func (ops *Options) setdefaults() {
 	if ops.OutputQueueSize == 0 {
 		ops.OutputQueueSize = DefaultOutputQueueSize
 	}
+	if ops.LogFunction == nil {
+		ops.LogFunction = func(string, ...interface{}) {}
+	}
 }
 
 // NewTypeManager returns a TypeManager using the options provided
@@ -180,25 +180,46 @@ func NewTypeManager(ops Options) (*TypeManager, error) {
 	return tm, nil
 }
 
+// newTypeManagerWithKafka returns a TypeManager using the options provided and the provided kafka for testing
+func newTypeManagerWithKafka(ops Options, k kafka) (*TypeManager, error) {
+	ops.setdefaults()
+	rid, err := uuid.NewRandom()
+	if err != nil {
+		return nil, errors.Wrap(err, "error getting random ID")
+	}
+	tm := &TypeManager{
+		ops: ops,
+		k:   k,
+		contains: &lockingCRDTs{
+			values:    make(map[string]*crdt),
+			abstracts: make(map[string]*abstractCRDT),
+		},
+		id: rid.String(),
+		lf: ops.LogFunction,
+	}
+	// listener and snapshots must be manually started
+	return tm, nil
+}
+
 // DataStructure contains information about an extant data stucture
 type DataStructure struct {
 	Name string
 	Type DataType
 }
 
-// Contains returns all known data structures
-func (tm *TypeManager) Contains() []DataStructure {
+// Contains returns all known data structures as a map of name to DataStructure
+func (tm *TypeManager) Contains() map[string]DataStructure {
 	tm.contains.RLock()
 	defer tm.contains.RUnlock()
 
-	output := []DataStructure{}
+	output := map[string]DataStructure{}
 
 	for _, ab := range tm.contains.abstracts {
 		ds := DataStructure{
 			Name: ab.id,
 			Type: ab.dtype,
 		}
-		output = append(output, ds)
+		output[ab.id] = ds
 	}
 
 	return output
@@ -305,11 +326,10 @@ func (tm *TypeManager) sendop(op *operationMessage) error {
 
 // Stop shuts down the TypeManager
 func (tm *TypeManager) Stop() {
-	tm.stckr.Stop()
-	if err := tm.k.Close(); err != nil {
-		tm.lf("error closing producer: %v", err)
+	if tm.stckr != nil {
+		tm.stckr.Stop()
 	}
 	if err := tm.k.Close(); err != nil {
-		tm.lf("error closing consumer: %v", err)
+		tm.lf("error closing kafka: %v", err)
 	}
 }
