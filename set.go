@@ -54,10 +54,12 @@ func (tm *TypeManager) NewSet(name string) *Set {
 	as := &crdt{
 		id:    name + aSetIDSuffix,
 		dtype: aSet,
+		sval:  setValue{},
 	}
 	rs := &crdt{
 		id:    name + rSetIDSuffix,
 		dtype: rSet,
+		sval:  setValue{},
 	}
 	abstract := &abstractCRDT{
 		id:    name,

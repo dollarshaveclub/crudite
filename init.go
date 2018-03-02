@@ -6,8 +6,6 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-	cluster "github.com/bsm/sarama-cluster"
-	"github.com/google/uuid"
 	"github.com/pkg/errors"
 )
 
@@ -27,19 +25,12 @@ func (tm *TypeManager) Init(ctx context.Context) error {
 	// get latest snapshot for each crdt
 	// restore latest snapshot
 	// replay log from offset of snapshot
-	rid, err := uuid.NewRandom()
+	k, err := tm.k.NewConsumer(tm.ops, sarama.OffsetOldest)
 	if err != nil {
-		return errors.Wrap(err, "error getting random ID")
+		return errors.Wrap(err, "error getting new Kafka consumer")
 	}
-	cfg := cluster.Config{}
-	cfg.Consumer.Offsets.Initial = sarama.OffsetOldest
-	c, err := cluster.NewConsumer(tm.ops.Brokers, rid.String(), []string{tm.ops.Topic}, &cfg)
-	if err != nil {
-		return errors.Wrap(err, "error creating Kafka consumer")
-	}
-	defer c.Close()
 
-	hwm := c.HighWaterMarks()[tm.ops.Topic]
+	hwm := k.HighWaterMarks()[tm.ops.Topic]
 	if len(hwm) == 0 {
 		return errors.New("empty high water marks")
 	}
@@ -48,7 +39,7 @@ func (tm *TypeManager) Init(ctx context.Context) error {
 	opm := map[string][]logOp{}
 	var partdone int
 
-	for m := range c.Messages() {
+	for m := range k.ConsumerMessages() {
 		select {
 		case <-ctx.Done():
 			return ErrInitAborted
@@ -92,8 +83,9 @@ func (tm *TypeManager) Init(ctx context.Context) error {
 		}
 		if _, ok := am[ssop.AbstractID]; !ok {
 			am[ssop.AbstractID] = &abstractCRDT{
-				id:    ssop.AbstractID,
-				dtype: ssop.AbstractType,
+				id:         ssop.AbstractID,
+				dtype:      ssop.AbstractType,
+				components: map[DataType]*crdt{},
 			}
 		}
 		am[ssop.AbstractID].components[ssop.Type] = cm[id]

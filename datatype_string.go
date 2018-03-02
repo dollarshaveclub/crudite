@@ -4,9 +4,9 @@ package crudite
 
 import "strconv"
 
-const _DataType_name = "PNCounterLWWSetMapFromSetrSet"
+const _DataType_name = "PNCounterLWWSetpCounternCounteraSetrSet"
 
-var _DataType_index = [...]uint8{0, 9, 15, 25, 29}
+var _DataType_index = [...]uint8{0, 9, 15, 23, 31, 35, 39}
 
 func (i DataType) String() string {
 	if i < 0 || i >= DataType(len(_DataType_index)-1) {
